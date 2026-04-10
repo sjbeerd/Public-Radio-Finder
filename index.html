@@ -21,9 +21,7 @@
         body { font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; background: var(--bg); color: var(--text); transition: background 0.3s ease; overflow: hidden; }
         #app { padding: 20px; width: 100%; max-width: 400px; height: 90vh; display: flex; flex-direction: column; }
         
-        /* Added visual cue that the status text can be tapped to bypass */
-        .label { font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; flex-shrink: 0; cursor: pointer; transition: color 0.2s; }
-        .label:active { color: var(--blue); }
+        .label { font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; flex-shrink: 0; font-weight: bold; }
         
         #result-area { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; padding: 10px 0; min-height: 100px; }
         .station-entry { padding: 20px 0; border-bottom: 1px solid var(--border); }
@@ -46,18 +44,33 @@
         .filter-btn { flex: 1; border: none; background: transparent; color: #888; padding: 10px 2px; border-radius: 20px; font-size: 0.7rem; cursor: pointer; font-weight: 600; transition: all 0.2s; white-space: nowrap; }
         .filter-btn.active { background: var(--blue); color: white; }
 
-        #zip-container { margin-top: 10px; display: none; background: var(--card); padding: 15px; border-radius: 15px; border: 1px solid var(--border); flex-shrink: 0; }
-        input { padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 1.1rem; width: 100px; text-align: center; background: var(--bg); color: var(--text); outline: none; }
+        /* Startup & Fallback UI */
+        #startup-container { margin: auto; display: flex; flex-direction: column; gap: 20px; width: 100%; align-items: center; justify-content: center; height: 100%; }
         
-        .controls { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 10px; flex-shrink: 0; }
-        .btn-main { padding: 12px 28px; border-radius: 25px; border: 1px solid var(--border); background: var(--card); font-size: 0.85rem; color: var(--text); font-weight: 600; cursor: pointer; width: 180px; }
-        .btn-zip { background: var(--blue); color: white; border: none; padding: 12px 20px; border-radius: 8px; margin-left: 8px; font-weight: bold; cursor: pointer; }
+        .btn-gps { background: var(--blue); color: white; border: none; padding: 15px 30px; border-radius: 25px; font-size: 1.1rem; font-weight: bold; cursor: pointer; width: 80%; max-width: 250px; box-shadow: 0 4px 10px rgba(0,48,135,0.2); }
+        .btn-gps:active { transform: scale(0.98); }
+
+        .zip-row { display: flex; justify-content: center; align-items: center; gap: 10px; width: 100%; }
+        input { padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 1.1rem; width: 120px; text-align: center; background: var(--bg); color: var(--text); outline: none; }
+        .btn-zip { background: var(--card); color: var(--text); border: 1px solid var(--border); padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+
+        .controls { display: flex; justify-content: center; margin-top: 10px; flex-shrink: 0; display: none; }
+        .btn-main { padding: 10px 20px; border-radius: 20px; border: 1px solid var(--border); background: var(--card); font-size: 0.8rem; color: var(--text); font-weight: 600; cursor: pointer; }
     </style>
 </head>
 <body>
     <div id="app">
-        <div id="status" class="label" onclick="showZipFallback()">Locating Signal... (Tap to Skip)</div>
+        <div id="status" class="label">READY TO SCAN</div>
         
+        <div id="startup-container">
+            <button class="btn-gps" onclick="requestGPS()">📍 Use GPS Location</button>
+            <div style="color: #888; font-size: 0.9rem; margin: 10px 0;">— or —</div>
+            <div class="zip-row">
+                <input type="text" id="zip-input" inputmode="numeric" pattern="[0-9]*" placeholder="ZIP Code" maxlength="5">
+                <button class="btn-zip" onclick="useZip()">Search</button>
+            </div>
+        </div>
+
         <div id="result-area"></div>
 
         <div id="filter-container">
@@ -68,15 +81,8 @@
             </div>
         </div>
 
-        <div id="zip-container">
-            <div style="display:flex; justify-content:center; align-items:center;">
-                <input type="text" id="zip-input" inputmode="numeric" pattern="[0-9]*" placeholder="ZIP" maxlength="5">
-                <button class="btn-zip" onclick="useZip()">GO</button>
-            </div>
-        </div>
-
-        <div class="controls">
-            <button class="btn-main" onclick="refreshSignal()">Refresh Scan</button>
+        <div id="controls" class="controls">
+            <button class="btn-main" onclick="resetApp()">Start Over</button>
         </div>
     </div>
 
@@ -86,102 +92,100 @@
         let currentLat = null;
         let currentLon = null;
         let currentMode = 'all';
-        let fallbackTimer = null;
 
-        // Use DOMContentLoaded instead of window.onload to prevent assets from blocking the script
-        document.addEventListener('DOMContentLoaded', () => {
-            // Slight delay ensures the UI paints the "Tap to Skip" text before locking up the thread
-            setTimeout(refreshSignal, 100);
-        });
-
-        function refreshSignal() {
-            clearTimeout(fallbackTimer);
-            document.getElementById('status').innerText = "Locating Signal... (Tap to Skip)";
-            document.getElementById('zip-container').style.display = "none";
-            document.getElementById('filter-container').style.display = "none";
-            document.getElementById('result-area').innerHTML = "";
-
-            currentLat = null;
-
-            // Absolute 3-second failsafe
-            fallbackTimer = setTimeout(() => {
-                if (!currentLat) showZipFallback();
-            }, 3000);
-
-            if ('geolocation' in navigator) {
-                navigator.geolocation.getCurrentPosition(
-                    (pos) => {
-                        clearTimeout(fallbackTimer);
-                        currentLat = pos.coords.latitude;
-                        currentLon = pos.coords.longitude;
-                        findSignal();
-                    },
-                    (err) => {
-                        clearTimeout(fallbackTimer);
-                        showZipFallback();
-                    },
-                    // FIX: Turned high accuracy OFF. Wi-Fi/Cell tower location is much faster indoors.
-                    { enableHighAccuracy: false, timeout: 2500, maximumAge: 60000 }
-                );
-            } else {
-                clearTimeout(fallbackTimer);
-                showZipFallback();
+        // Called when user explicitly taps the GPS button
+        function requestGPS() {
+            document.getElementById('status').innerText = "REQUESTING LOCATION...";
+            document.getElementById('startup-container').style.display = "none";
+            
+            try {
+                if ('geolocation' in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        function(pos) {
+                            currentLat = pos.coords.latitude;
+                            currentLon = pos.coords.longitude;
+                            findSignal();
+                        },
+                        function(err) {
+                            alert("Location access denied or unavailable. Please use ZIP code.");
+                            resetApp();
+                        },
+                        { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+                    );
+                } else {
+                    alert("Your browser does not support Geolocation.");
+                    resetApp();
+                }
+            } catch (e) {
+                alert("An error occurred starting GPS.");
+                resetApp();
             }
-        }
-
-        function setMode(mode) {
-            currentMode = mode;
-            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-            document.getElementById(`btn-${mode}`).classList.add('active');
-            findSignal();
-        }
-
-        function showZipFallback() {
-            clearTimeout(fallbackTimer);
-            document.getElementById('status').innerText = "Location Offline";
-            document.getElementById('zip-container').style.display = "block";
-            document.getElementById('filter-container').style.display = "none";
-            document.getElementById('result-area').innerHTML = "";
         }
 
         async function useZip() {
             const zip = document.getElementById('zip-input').value;
-            if (zip.length < 5) return;
+            if (zip.length < 5) {
+                alert("Please enter a valid 5-digit ZIP code.");
+                return;
+            }
             
-            document.getElementById('status').innerText = "Searching ZIP...";
+            document.getElementById('status').innerText = "SEARCHING ZIP...";
+            document.getElementById('startup-container').style.display = "none";
+
             try {
-                const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+                const res = await fetch('https://api.zippopotam.us/us/' + zip);
                 if (!res.ok) throw new Error("Invalid ZIP");
                 const data = await res.json();
                 currentLat = parseFloat(data.places[0].latitude);
                 currentLon = parseFloat(data.places[0].longitude);
-                document.getElementById('zip-container').style.display = "none";
                 findSignal();
             } catch (e) { 
-                document.getElementById('status').innerText = "Invalid ZIP. Try again.";
+                alert("Could not find that ZIP code. Try again.");
+                resetApp();
             }
+        }
+
+        function resetApp() {
+            currentLat = null;
+            currentLon = null;
+            document.getElementById('status').innerText = "READY TO SCAN";
+            document.getElementById('startup-container').style.display = "flex";
+            document.getElementById('result-area').innerHTML = "";
+            document.getElementById('filter-container').style.display = "none";
+            document.getElementById('controls').style.display = "none";
+            document.getElementById('zip-input').value = "";
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.filter-btn').forEach(function(btn) {
+                btn.classList.remove('active');
+            });
+            document.getElementById('btn-' + mode).classList.add('active');
+            findSignal();
         }
 
         function findSignal() {
             if (!currentLat || !currentLon) return;
 
             if (typeof STATIONS === 'undefined') {
-                document.getElementById('status').innerText = "Error: stations.js missing";
+                document.getElementById('status').innerText = "ERROR: STATIONS DATA MISSING";
                 return;
             }
 
             let bestStations = [];
-            let minD = Infinity;
+            let minD = 999999;
 
             let filteredList = STATIONS;
             if (currentMode === 'primary') {
-                filteredList = STATIONS.filter(s => s.type === "Primary");
+                filteredList = STATIONS.filter(function(s) { return s.type === "Primary"; });
             } else if (currentMode === 'boutique') {
-                filteredList = STATIONS.filter(s => s.type === "Boutique");
+                filteredList = STATIONS.filter(function(s) { return s.type === "Boutique"; });
             }
 
-            filteredList.forEach(s => {
+            filteredList.forEach(function(s) {
                 const d = getD(currentLat, currentLon, s.lat, s.lon);
+                
                 if (d < (minD - 0.1)) {
                     minD = d;
                     bestStations = [s];
@@ -200,15 +204,16 @@
         function renderResults(stations, distance) {
             const area = document.getElementById('result-area');
             area.innerHTML = '';
-            document.getElementById('status').innerText = "Public Radio Finder";
+            document.getElementById('status').innerText = "PUBLIC RADIO FINDER";
             document.getElementById('filter-container').style.display = "block";
+            document.getElementById('controls').style.display = "flex";
 
             if (stations.length === 0) {
-                area.innerHTML = "<div style='margin-top:20px; color:#888;'>No stations found in this mode.</div>";
+                area.innerHTML = "<div style='margin-top:40px; color:#888;'>No stations found in this category.</div>";
                 return;
             }
 
-            stations.forEach(s => {
+            stations.forEach(function(s) {
                 const div = document.createElement('div');
                 div.className = 'station-entry';
                 
@@ -230,12 +235,14 @@
             });
         }
 
+        // Changed ** to Math.pow() for bulletproof legacy compatibility
         function getD(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
-            const dLat = (lat2-lat1) * Math.PI/180;
-            const dLon = (lon2-lon1) * Math.PI/180;
-            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.pow(Math.sin(dLat / 2), 2) + 
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.pow(Math.sin(dLon / 2), 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
     </script>
 </body>
