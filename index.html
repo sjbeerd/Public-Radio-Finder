@@ -15,7 +15,7 @@
         .label { font-size: 0.9rem; color: #888; text-transform: uppercase; letter-spacing: 2px; }
         .name { font-size: 2.8rem; font-weight: 900; color: var(--blue); margin: 15px 0; line-height: 1.1; }
         .freq { font-size: 4.5rem; font-weight: 200; color: var(--red); letter-spacing: -1px; }
-        .dist { font-size: 1rem; color: #bbb; margin-top: 20px; font-weight: 400; }
+        .dist { font-size: 1rem; color: #bbb; margin-top: 20px; }
         button { 
             margin-top: 30px; padding: 12px 24px; border-radius: 25px; 
             border: 1px solid #eee; background: #fafafa; font-size: 0.8rem; 
@@ -33,55 +33,68 @@
     </div>
 
     <script>
-        // This looks for the stations.json file in the same folder as this index.html
-        const DATA_URL = "stations.json"; 
+        // BAKED-IN STATION DATABASE
+        // Add as many as you want here. The app will scan the entire list instantly.
+        const STATIONS = [
+            {"call": "WAMC", "freq": "91.7", "lat": 41.722, "lon": -73.908, "city": "Poughkeepsie, NY"},
+            {"call": "WAMC", "freq": "90.3", "lat": 42.503, "lon": -73.911, "city": "Albany, NY"},
+            {"call": "WAMC", "freq": "103.9", "lat": 41.512, "lon": -73.945, "city": "Beacon, NY"},
+            {"call": "WAMC", "freq": "90.9", "lat": 41.932, "lon": -73.998, "city": "Kingston, NY"},
+            {"call": "WNYC", "freq": "93.9", "lat": 40.748, "lon": -73.984, "city": "New York, NY"},
+            {"call": "WHYY", "freq": "90.9", "lat": 39.952, "lon": -75.163, "city": "Philadelphia, PA"},
+            {"call": "WNJT", "freq": "88.1", "lat": 40.220, "lon": -74.759, "city": "Trenton, NJ"},
+            {"call": "WBUR", "freq": "90.9", "lat": 42.348, "lon": -71.104, "city": "Boston, MA"},
+            {"call": "WAMU", "freq": "88.5", "lat": 38.936, "lon": -77.086, "city": "Washington, DC"},
+            {"call": "WBEZ", "freq": "91.5", "lat": 41.882, "lon": -87.627, "city": "Chicago, IL"},
+            {"call": "KQED", "freq": "88.5", "lat": 37.774, "lon": -122.419, "city": "San Francisco, CA"},
+            {"call": "KPCC", "freq": "89.3", "lat": 34.147, "lon": -118.144, "city": "Pasadena, CA"},
+            {"call": "KUOW", "freq": "94.9", "lat": 47.606, "lon": -122.332, "city": "Seattle, WA"},
+            {"call": "KUT", "freq": "90.5", "lat": 30.267, "lon": -97.743, "city": "Austin, TX"},
+            {"call": "WABE", "freq": "90.1", "lat": 33.749, "lon": -84.388, "city": "Atlanta, GA"},
+            {"call": "KSKA", "freq": "91.1", "lat": 61.218, "lon": -149.900, "city": "Anchorage, AK"},
+            {"call": "KTOO", "freq": "104.3", "lat": 58.301, "lon": -134.419, "city": "Juneau, AK"},
+            {"call": "HPR-1", "freq": "88.1", "lat": 21.306, "lon": -157.858, "city": "Honolulu, HI"},
+            {"call": "KKUA", "freq": "90.7", "lat": 20.889, "lon": -156.458, "city": "Wailuku, HI"},
+            {"call": "KOPB", "freq": "91.5", "lat": 45.515, "lon": -122.678, "city": "Portland, OR"},
+            {"call": "WLRN", "freq": "91.3", "lat": 25.761, "lon": -80.191, "city": "Miami, FL"},
+            {"call": "CPR News", "freq": "90.1", "lat": 39.739, "lon": -104.990, "city": "Denver, CO"},
+            {"call": "WUNC", "freq": "91.5", "lat": 35.913, "lon": -79.055, "city": "Chapel Hill, NC"},
+            {"call": "KERA", "freq": "90.1", "lat": 32.776, "lon": -96.797, "city": "Dallas, TX"}
+        ];
 
         window.onload = () => {
             if (navigator.geolocation) {
-                // maximumAge: 0 ensures we get a fresh GPS lock every time the app opens
                 navigator.geolocation.getCurrentPosition(findSignal, (err) => {
                     document.getElementById('status').innerText = "GPS Error: " + err.message;
                 }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
             }
         };
 
-        async function findSignal(pos) {
+        function findSignal(pos) {
             const lat = pos.coords.latitude;
             const lon = pos.coords.longitude;
+            
+            let best = null;
+            let minD = Infinity;
 
-            try {
-                // Fetch the static station database
-                const response = await fetch(DATA_URL);
-                if (!response.ok) throw new Error("File not found");
-                const stations = await response.json();
-                
-                let best = null;
-                let minD = Infinity;
-
-                // Calculate which station is physically closest to your current location
-                stations.forEach(s => {
-                    const d = getD(lat, lon, s.lat, s.lon);
-                    if (d < minD) {
-                        minD = d;
-                        best = s;
-                    }
-                });
-
-                if (best) {
-                    document.getElementById('status').innerText = "Strongest News Signal:";
-                    document.getElementById('name').innerText = best.call;
-                    document.getElementById('freq').innerText = best.freq + " FM";
-                    document.getElementById('meta').innerText = `${best.city} (${minD.toFixed(1)} miles away)`;
+            STATIONS.forEach(s => {
+                const d = getD(lat, lon, s.lat, s.lon);
+                if (d < minD) {
+                    minD = d;
+                    best = s;
                 }
-            } catch (e) {
-                document.getElementById('status').innerText = "Database Offline";
-                console.error(e);
+            });
+
+            if (best) {
+                document.getElementById('status').innerText = "Strongest News Signal:";
+                document.getElementById('name').innerText = best.call;
+                document.getElementById('freq').innerText = best.freq + " FM";
+                document.getElementById('meta').innerText = `${best.city} (${minD.toFixed(1)} miles away)`;
             }
         }
 
-        // Haversine formula for calculating distance on a sphere
         function getD(lat1, lon1, lat2, lon2) {
-            const R = 3958.8; // Radius of the Earth in miles
+            const R = 3958.8;
             const dLat = (lat2-lat1) * Math.PI/180;
             const dLon = (lon2-lon1) * Math.PI/180;
             const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
