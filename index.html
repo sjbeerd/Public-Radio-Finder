@@ -1,80 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NPR Finder</title>
+    <style>
+        :root { --blue: #003087; --red: #d62828; --gray: #888; }
+        body { 
+            font-family: -apple-system, system-ui, sans-serif; 
+            display: flex; align-items: center; justify-content: center; 
+            height: 100vh; margin: 0; text-align: center; background: #fff; color: #333; 
+        }
+        #app { padding: 20px; width: 100%; max-width: 400px; }
+        .label { font-size: 0.9rem; color: var(--gray); text-transform: uppercase; letter-spacing: 2px; }
+        .name { font-size: 2.2rem; font-weight: 900; color: var(--blue); margin: 15px 0; line-height: 1.1; }
+        .freq { font-size: 4rem; font-weight: 300; color: var(--red); letter-spacing: -1px; }
+        .dist { font-size: 1rem; color: #bbb; margin-top: 20px; font-weight: 400; }
+        #refresh-btn { 
+            margin-top: 30px; padding: 12px 24px; border-radius: 25px; 
+            border: 1px solid #eee; background: #fafafa; font-size: 0.8rem; 
+            color: #666; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="status" class="label">Pinging Satellites...</div>
+        <div id="name" class="name"></div>
+        <div id="freq" class="freq"></div>
+        <div id="meta" class="dist"></div>
+        <button id="refresh-btn" onclick="location.reload()">Force Location Update</button>
+    </div>
+
     <script>
         window.onload = () => {
             if (navigator.geolocation) {
+                // maximumAge: 0 is the "nuclear option" for the Home Screen cache
                 navigator.geolocation.getCurrentPosition(findStation, (err) => {
                     document.getElementById('status').innerText = "GPS Error: " + err.message;
-                }, { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 });
+                }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
             }
         };
 
         async function findStation(pos) {
             const lat = pos.coords.latitude;
             const lon = pos.coords.longitude;
-            const cb = Date.now();
+            const cb = Date.now(); // Cache-buster for the API request
             
             try {
-                // STEP 1: Search for 'News' or 'Talk' tags specifically within the US
+                // Simultaneous fetches: Search News/Talk specifically AND broader NPR tags
                 const newsUrl = `https://de1.api.radio-browser.info/json/stations/search?countrycode=US&tag=news,talk&limit=200&cb=${cb}`;
-                // STEP 2: Search for 'NPR' or 'Public Radio' tags as a fallback
                 const fallbackUrl = `https://de1.api.radio-browser.info/json/stations/search?countrycode=US&tag=npr,public%20radio&limit=200&cb=${cb}`;
 
                 const [newsRes, fallbackRes] = await Promise.all([fetch(newsUrl), fetch(fallbackUrl)]);
-                const newsStations = await newsRes.json();
-                const fallbackStations = await fallbackRes.json();
+                const newsList = await newsRes.json();
+                const fallbackList = await fallbackRes.json();
 
-                // Merge and filter for unique entries
-                const allStations = [...newsStations, ...fallbackStations];
+                // Combine results into one massive pool
+                const rawPool = [...newsList, ...fallbackList];
                 
-                let primaryQueue = [];
-                let secondaryQueue = [];
+                let newsMatches = [];
+                let musicMatches = [];
 
-                allStations.forEach(s => {
+                rawPool.forEach(s => {
                     if (s.geo_lat && s.geo_long) {
-                        const d = getD(lat, lon, s.geo_lat, s.geo_long);
-                        const tags = (s.tags || "").toLowerCase();
-                        const name = s.name.toLowerCase();
-
-                        // Logic: If it's explicitly music (classical/jazz), send to secondary
-                        const isMusic = tags.includes('classical') || tags.includes('jazz') || name.includes('classical');
+                        const d = calculateDistance(lat, lon, s.geo_lat, s.geo_long);
+                        const data = (s.name + (s.tags || "")).toLowerCase();
                         
-                        if (!isMusic) {
-                            primaryQueue.push({ ...s, dist: d });
+                        // Strict category check: Is it music or news?
+                        const isMusic = data.includes('classical') || data.includes('jazz') || data.includes('music');
+                        const isNews = data.includes('news') || data.includes('talk') || data.includes('information');
+
+                        const entry = { ...s, dist: d };
+
+                        if (isNews && !isMusic) {
+                            newsMatches.push(entry);
                         } else {
-                            secondaryQueue.push({ ...s, dist: d });
+                            musicMatches.push(entry);
                         }
                     }
                 });
 
-                // Sort by distance
-                primaryQueue.sort((a, b) => a.dist - b.dist);
-                secondaryQueue.sort((a, b) => a.dist - b.dist);
+                // Sort both buckets by actual distance
+                newsMatches.sort((a, b) => a.dist - b.dist);
+                musicMatches.sort((a, b) => a.dist - b.dist);
 
-                // FINAL SELECTION: 
-                // We will take the closest non-music station within a 200-mile range.
-                // If nothing is found, we fall back to the closest music-public station.
-                let best = (primaryQueue.length > 0 && primaryQueue[0].dist < 200) 
-                           ? primaryQueue[0] 
-                           : secondaryQueue[0];
+                // LOGIC: Show the closest News station within 200 miles. 
+                // Only fall back to Music if News is literally unavailable.
+                let selected = (newsMatches.length > 0 && newsMatches[0].dist < 200) 
+                               ? newsMatches[0] 
+                               : musicMatches[0];
 
-                if (best) {
+                if (selected) {
                     document.getElementById('status').innerText = "Tune Your Radio To:";
-                    document.getElementById('name').innerText = best.name.split(/[-|]/)[0].trim();
                     
-                    const fMatch = (best.name + " " + (best.tags || "")).match(/\d{2,3}\.\d/);
-                    document.getElementById('freq').innerText = fMatch ? fMatch[0] + " FM" : "Check Dial";
+                    // Cleanup station name (removes stream URLs, dashes, etc)
+                    const cleanName = selected.name.split(/[-|]/)[0].trim();
+                    document.getElementById('name').innerText = cleanName;
                     
-                    document.getElementById('meta').innerText = `${best.state || ''} (${best.dist.toFixed(1)} miles away)`;
+                    // Find frequency (looks for XX.X pattern)
+                    const freqPattern = (selected.name + " " + (selected.tags || "")).match(/\d{2,3}\.\d/);
+                    document.getElementById('freq').innerText = freqPattern ? freqPattern[0] + " FM" : "Check Dial";
+                    
+                    document.getElementById('meta').innerText = `${selected.state || ''} (${selected.dist.toFixed(1)} miles away)`;
                 }
             } catch (e) { 
-                document.getElementById('status').innerText = "Sync Failed"; 
+                document.getElementById('status').innerText = "Network Error"; 
             }
         }
 
-        function getD(lat1, lon1, lat2, lon2) {
-            const R = 3958.8;
+        // Haversine formula for distance calculation
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 3958.8; // Miles
             const dLat = (lat2-lat1) * Math.PI/180;
             const dLon = (lon2-lon1) * Math.PI/180;
             const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
     </script>
+</body>
+</html>
