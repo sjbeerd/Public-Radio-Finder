@@ -5,117 +5,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>NPR Finder</title>
     <style>
-        :root { --blue: #003087; --red: #d62828; --gray: #888; }
-        body { 
-            font-family: -apple-system, system-ui, sans-serif; 
-            display: flex; align-items: center; justify-content: center; 
-            height: 100vh; margin: 0; text-align: center; background: #fff; color: #333; 
-        }
+        :root { --blue: #003087; --red: #d62828; }
+        body { font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; background: #fff; color: #333; }
         #app { padding: 20px; width: 100%; max-width: 400px; }
-        .label { font-size: 0.9rem; color: var(--gray); text-transform: uppercase; letter-spacing: 2px; }
+        .label { font-size: 0.9rem; color: #888; text-transform: uppercase; letter-spacing: 2px; }
         .name { font-size: 2.2rem; font-weight: 900; color: var(--blue); margin: 15px 0; line-height: 1.1; }
-        .freq { font-size: 4rem; font-weight: 300; color: var(--red); letter-spacing: -1px; }
-        .dist { font-size: 1rem; color: #bbb; margin-top: 20px; font-weight: 400; }
-        #refresh-btn { 
-            margin-top: 30px; padding: 12px 24px; border-radius: 25px; 
-            border: 1px solid #eee; background: #fafafa; font-size: 0.8rem; 
-            color: #666; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent;
-        }
+        .freq { font-size: 4rem; font-weight: 300; color: var(--red); }
+        .dist { font-size: 1rem; color: #bbb; margin-top: 20px; }
+        button { margin-top: 30px; padding: 12px 24px; border-radius: 25px; border: 1px solid #eee; background: #fafafa; font-size: 0.8rem; color: #666; font-weight: 600; cursor: pointer; }
     </style>
 </head>
 <body>
     <div id="app">
-        <div id="status" class="label">Pinging Satellites...</div>
+        <div id="status" class="label">Pinging NPR...</div>
         <div id="name" class="name"></div>
         <div id="freq" class="freq"></div>
         <div id="meta" class="dist"></div>
-        <button id="refresh-btn" onclick="location.reload()">Force Location Update</button>
+        <button onclick="location.reload()">Refresh Signal</button>
     </div>
 
     <script>
         window.onload = () => {
             if (navigator.geolocation) {
-                // maximumAge: 0 is the "nuclear option" for the Home Screen cache
-                navigator.geolocation.getCurrentPosition(findStation, (err) => {
+                navigator.geolocation.getCurrentPosition(findNPRStation, (err) => {
                     document.getElementById('status').innerText = "GPS Error: " + err.message;
                 }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
             }
         };
 
-        async function findStation(pos) {
+        async function findNPRStation(pos) {
             const lat = pos.coords.latitude;
             const lon = pos.coords.longitude;
-            const cb = Date.now(); // Cache-buster for the API request
             
             try {
-                // Simultaneous fetches: Search News/Talk specifically AND broader NPR tags
-                const newsUrl = `https://de1.api.radio-browser.info/json/stations/search?countrycode=US&tag=news,talk&limit=200&cb=${cb}`;
-                const fallbackUrl = `https://de1.api.radio-browser.info/json/stations/search?countrycode=US&tag=npr,public%20radio&limit=200&cb=${cb}`;
+                // Using the official NPR station finder API logic
+                // This fetches stations near your coordinates directly from NPR's database
+                const url = `https://secure.npr.org/getStations?lat=${lat}&lon=${lon}`;
+                const response = await fetch(url);
+                const data = await response.json();
 
-                const [newsRes, fallbackRes] = await Promise.all([fetch(newsUrl), fetch(fallbackUrl)]);
-                const newsList = await newsRes.json();
-                const fallbackList = await fallbackRes.json();
-
-                // Combine results into one massive pool
-                const rawPool = [...newsList, ...fallbackList];
+                // The NPR API returns an array called 'stations'
+                // We filter for stations where the primary genre is News or News/Talk
+                const allStations = data.stations || [];
                 
-                let newsMatches = [];
-                let musicMatches = [];
-
-                rawPool.forEach(s => {
-                    if (s.geo_lat && s.geo_long) {
-                        const d = calculateDistance(lat, lon, s.geo_lat, s.geo_long);
-                        const data = (s.name + (s.tags || "")).toLowerCase();
-                        
-                        // Strict category check: Is it music or news?
-                        const isMusic = data.includes('classical') || data.includes('jazz') || data.includes('music');
-                        const isNews = data.includes('news') || data.includes('talk') || data.includes('information');
-
-                        const entry = { ...s, dist: d };
-
-                        if (isNews && !isMusic) {
-                            newsMatches.push(entry);
-                        } else {
-                            musicMatches.push(entry);
-                        }
-                    }
+                let bestMatch = allStations.find(s => {
+                    const genre = (s.market_type || "").toLowerCase();
+                    const title = (s.name || "").toLowerCase();
+                    // Avoid anything that explicitly labels itself as Classical
+                    return !title.includes('classical') && !title.includes('music');
                 });
 
-                // Sort both buckets by actual distance
-                newsMatches.sort((a, b) => a.dist - b.dist);
-                musicMatches.sort((a, b) => a.dist - b.dist);
+                // Fallback to the first station if no "News" specific filter hit
+                if (!bestMatch) bestMatch = allStations[0];
 
-                // LOGIC: Show the closest News station within 200 miles. 
-                // Only fall back to Music if News is literally unavailable.
-                let selected = (newsMatches.length > 0 && newsMatches[0].dist < 200) 
-                               ? newsMatches[0] 
-                               : musicMatches[0];
-
-                if (selected) {
+                if (bestMatch) {
                     document.getElementById('status').innerText = "Tune Your Radio To:";
+                    document.getElementById('name').innerText = bestMatch.call || bestMatch.name;
                     
-                    // Cleanup station name (removes stream URLs, dashes, etc)
-                    const cleanName = selected.name.split(/[-|]/)[0].trim();
-                    document.getElementById('name').innerText = cleanName;
+                    // NPR API provides the frequency directly in the 'frequency' field
+                    const frequency = bestMatch.frequency || "Check Dial";
+                    const band = bestMatch.band || "FM";
+                    document.getElementById('freq').innerText = `${frequency} ${band}`;
                     
-                    // Find frequency (looks for XX.X pattern)
-                    const freqPattern = (selected.name + " " + (selected.tags || "")).match(/\d{2,3}\.\d/);
-                    document.getElementById('freq').innerText = freqPattern ? freqPattern[0] + " FM" : "Check Dial";
-                    
-                    document.getElementById('meta').innerText = `${selected.state || ''} (${selected.dist.toFixed(1)} miles away)`;
+                    document.getElementById('meta').innerText = `${bestMatch.city}, ${bestMatch.state}`;
+                } else {
+                    document.getElementById('status').innerText = "No NPR Station Found Nearby";
                 }
-            } catch (e) { 
-                document.getElementById('status').innerText = "Network Error"; 
+            } catch (e) {
+                document.getElementById('status').innerText = "NPR API Connection Error";
             }
-        }
-
-        // Haversine formula for distance calculation
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 3958.8; // Miles
-            const dLat = (lat2-lat1) * Math.PI/180;
-            const dLon = (lon2-lon1) * Math.PI/180;
-            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
     </script>
 </body>
