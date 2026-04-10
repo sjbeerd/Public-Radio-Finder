@@ -2,13 +2,19 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NPR Finder</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NPR Road Trip Finder</title>
     <style>
+        :root {
+            --npr-blue: #003087;
+            --npr-red: #d62828;
+            --white: #ffffff;
+            --gray: #f4f4f9;
+        }
         body {
-            font-family: -apple-system, system-ui, sans-serif;
-            background-color: #ffffff;
-            color: #121212;
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--white);
+            color: #333;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -16,74 +22,112 @@
             margin: 0;
             text-align: center;
         }
-        #container { padding: 20px; }
-        .status { font-size: 1.1rem; color: #666; margin-bottom: 10px; }
-        .station-name { font-size: 3rem; font-weight: 800; color: #003087; margin: 10px 0; }
-        .frequency { font-size: 1.8rem; color: #d62828; }
-        .dist { margin-top: 15px; color: #888; }
+        #app-container {
+            padding: 30px;
+            width: 100%;
+        }
+        .status-label {
+            font-size: 1rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+        }
+        .station-name {
+            font-size: 2.8rem;
+            font-weight: 900;
+            color: var(--npr-blue);
+            line-height: 1.1;
+            margin: 10px 0;
+            word-wrap: break-word;
+        }
+        .frequency-display {
+            font-size: 3.5rem;
+            font-weight: 300;
+            color: var(--npr-red);
+            margin: 5px 0;
+        }
+        .distance-tag {
+            font-size: 1.1rem;
+            color: #aaa;
+            margin-top: 20px;
+        }
+        .loading-spinner {
+            color: var(--npr-blue);
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
-    <div id="container">
-        <div id="status" class="status">Locating...</div>
+
+    <div id="app-container">
+        <div id="status" class="status-label">Locating Signal...</div>
         <div id="name" class="station-name"></div>
-        <div id="freq" class="frequency"></div>
-        <div id="meta" class="dist"></div>
+        <div id="freq" class="frequency-display"></div>
+        <div id="meta" class="distance-tag"></div>
     </div>
+
     <script>
         window.onload = () => {
             if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(findStation, () => {
-                    document.getElementById('status').innerText = "Please enable location.";
+                // Request high accuracy for better road trip results
+                navigator.geolocation.getCurrentPosition(findStation, handleError, {
+                    enableHighAccuracy: true,
+                    timeout: 10000
                 });
+            } else {
+                document.getElementById('status').innerText = "GPS Not Supported";
             }
         };
+
+        function handleError() {
+            document.getElementById('status').innerText = "Enable Location Access";
+        }
 
         async function findStation(pos) {
             const lat = pos.coords.latitude;
             const lon = pos.coords.longitude;
             
             try {
-                // Fetch the 100 closest stations to your current GPS
+                // 1. Fetch 100 closest stations to current GPS
                 const url = `https://de1.api.radio-browser.info/json/stations/search?lat=${lat}&long=${lon}&limit=100&hidebroken=true&order=distance`;
                 const res = await fetch(url);
                 const stations = await res.json();
 
-                // Nationwide Public Radio identifiers
-                const publicKeywords = ['npr', 'public radio', 'public broadcasting', 'news/talk', 'university', 'college'];
+                // 2. Define "Public Radio" DNA
+                const publicKeywords = ['npr', 'public radio', 'public broadcasting', 'news/talk', 'university', 'college', 'wamc', 'whyy', 'wnyc', 'wamu', 'kcrw', 'kqed'];
                 
-                // 1. Try to find the closest station that is explicitly Public Radio
+                // 3. Find the first station in the list that matches our keywords
                 let bestMatch = stations.find(s => {
-                    const content = (s.name + s.tags).toLowerCase();
-                    return publicKeywords.some(k => content.includes(k));
+                    const searchData = (s.name + s.tags).toLowerCase();
+                    return publicKeywords.some(k => searchData.includes(k));
                 });
 
-                // 2. If no "Public" match, fallback to the absolute closest station
+                // 4. Fallback: If no public station found in top 100, just take the absolute closest
                 if (!bestMatch) bestMatch = stations[0];
 
                 if (bestMatch) {
                     document.getElementById('status').innerText = "Tune Your Radio To:";
                     
-                    // Look for a frequency (e.g., 91.7 or 103.9) in the name or tags
-                    const freqMatch = (bestMatch.name + " " + bestMatch.tags).match(/\d{2,3}\.\d/);
-                    const frequency = freqMatch ? freqMatch[0] : "Check Dial";
-
-                    // Clean up the name (remove stream URLs or extra dashes)
+                    // Clean the name (remove stream info)
                     const cleanName = bestMatch.name.split(/[-|]/)[0].trim();
-
                     document.getElementById('name').innerText = cleanName;
-                    document.getElementById('freq').innerText = `${frequency} FM`;
-                    
-                    const d = getD(lat, lon, bestMatch.geo_lat, bestMatch.geo_long);
-                    document.getElementById('meta').innerText = `Near ${bestMatch.state || 'Current Location'} (${d.toFixed(1)} miles away)`;
+
+                    // Extract frequency (e.g. 91.7) from name or tags
+                    const freqMatch = (bestMatch.name + " " + bestMatch.tags).match(/\d{2,3}\.\d/);
+                    document.getElementById('freq').innerText = freqMatch ? `${freqMatch[0]} FM` : "Check Dial";
+
+                    // Show distance and state
+                    const d = calculateDistance(lat, lon, bestMatch.geo_lat, bestMatch.geo_long);
+                    document.getElementById('meta').innerText = `${bestMatch.state || ''} (${d.toFixed(1)} miles away)`;
                 }
             } catch (e) { 
-                document.getElementById('status').innerText = "Searching..."; 
+                document.getElementById('status').innerText = "Connection Error"; 
             }
         }
 
-        function getD(lat1, lon1, lat2, lon2) {
-            const R = 3958.8;
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 3958.8; // Miles
             const dLat = (lat2-lat1) * Math.PI/180;
             const dLon = (lon2-lon1) * Math.PI/180;
             const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
