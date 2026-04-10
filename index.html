@@ -194,45 +194,37 @@
         }
 
         function findSignal() {
-            if (!currentLat || !currentLon) return;
+    if (!currentLat || !currentLon) return;
 
-            let best = null;
-            let minD = Infinity;
+    let best = null;
+    let minD = Infinity;
 
-            const availableStations = newsOnly 
-                ? STATIONS.filter(s => s.type !== "Boutique")
-                : STATIONS;
+    // 1. Filter the list based on your toggle first
+    const availableStations = newsOnly 
+        ? STATIONS.filter(s => s.type !== "Boutique")
+        : STATIONS;
 
-            availableStations.forEach(s => {
-                const d = getD(currentLat, currentLon, s.lat, s.lon);
-                if (d < minD) {
-                    minD = d;
-                    best = s;
-                }
-            });
-
-            if (best) {
-                document.getElementById('status').innerText = "Public Radio Finder";
-                document.getElementById('filter-container').style.display = "block";
-                document.getElementById('name').innerText = best.call;
-                
-                const tag = document.getElementById('type-tag');
-                tag.innerText = best.type;
-                tag.style.display = "inline-block";
-                
-                document.getElementById('city-display').innerText = best.city;
-                document.getElementById('freq').innerText = best.freq + " FM";
-                
-                let strength = "sig-weak";
-                let statusTxt = "Weak Signal";
-                if (minD < 30) { strength = "sig-strong"; statusTxt = "Strong Signal"; }
-                else if (minD < 60) { strength = "sig-fringe"; statusTxt = "Fringe Signal"; }
-                
-                const meta = document.getElementById('meta');
-                meta.className = "dist " + strength;
-                meta.innerText = `${statusTxt} • ${minD.toFixed(1)} miles`;
-            }
+    availableStations.forEach(s => {
+        const d = getD(currentLat, currentLon, s.lat, s.lon);
+        
+        // 2. Check if this station is actually closer
+        // 3. Or, if the distance is identical (same tower), 
+        //    prefer Boutique stations when in "Show All" mode.
+        if (d < minD) {
+            minD = d;
+            best = s;
+        } else if (Math.abs(d - minD) < 0.1 && !newsOnly && s.type === "Boutique") {
+            // Tie-breaker: If we are in "Show All" and find a boutique 
+            // at the same distance, give it the spotlight.
+            best = s;
         }
+    });
+
+    if (best) {
+        // ... (rest of your display logic remains the same)
+        updateUI(best, minD); 
+    }
+}
 
         function getD(lat1, lon1, lat2, lon2) {
             const R = 3958.8;
